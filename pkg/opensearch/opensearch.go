@@ -78,6 +78,69 @@ func (ds *OpenSearchDatasource) CheckHealth(ctx context.Context, req *backend.Ch
 	db := jsonData.Get("database").MustString()
 	indexInterval := jsonData.Get("interval").MustString()
 
+	if strings.Contains(db, ",") {
+		indices := strings.Split(db, ",")
+		successCount := 0
+		var lastError error
+
+		for _, index := range indices {
+			index = strings.TrimSpace(index)
+
+			var osUrl string
+			if strings.Contains(index, ":") {
+				// Cross-cluster index
+				parts := strings.SplitN(index, ":", 2)
+				clusterName, indexName := parts[0], parts[1]
+				osUrl, err = createOpensearchURL(clusterName+":"+indexName+"/_mapping/field/"+url.PathEscape(timeField),
+					req.PluginContext.DataSourceInstanceSettings.URL)
+			} else {
+				osUrl, err = createOpensearchURL(index+"/_mapping/field/"+url.PathEscape(timeField),
+					req.PluginContext.DataSourceInstanceSettings.URL)
+			}
+
+			if err != nil {
+				lastError = err
+				continue
+			}
+
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, osUrl, bytes.NewBuffer(nil))
+			if err != nil {
+				lastError = err
+				continue
+			}
+			request.Header = req.GetHTTPHeaders()
+
+			response, err := ds.HttpClient.Do(request)
+			if err != nil {
+				lastError = err
+				continue
+			}
+			defer response.Body.Close()
+
+			if response.StatusCode == 200 {
+				successCount++
+			} else {
+				body, _ := io.ReadAll(response.Body)
+				lastError = fmt.Errorf("failed to access index %s: %s", index, string(body))
+			}
+		}
+
+		if successCount > 0 {
+			res.Status = backend.HealthStatusOk
+			res.Message = fmt.Sprintf("Successfully connected to %d out of %d indices",
+				successCount, len(indices))
+			return res, nil
+		}
+
+		res.Status = backend.HealthStatusError
+		if lastError != nil {
+			res.Message = fmt.Sprintf("Failed to access any indices. Last error: %v", lastError)
+		} else {
+			res.Message = "Failed to access any of the specified indices"
+		}
+		return res, nil
+	}
+
 	ip, err := client.NewIndexPattern(indexInterval, db)
 	if err != nil {
 		res.Status = backend.HealthStatusError
@@ -351,11 +414,32 @@ func createOpensearchURL(reqPath string, urlStr string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to parse data source URL: %s, error: %w", urlStr, err)
 	}
+
+	if strings.Contains(reqPath, ",") && strings.Contains(reqPath, "_mapping") {
+		segments := strings.Split(reqPath, "/")
+		for i, segment := range segments {
+			if strings.Contains(segment, ",") {
+				indices := strings.Split(segment, ",")
+				if len(indices) > 0 {
+					firstIndex := strings.TrimSpace(indices[0])
+					if strings.Contains(firstIndex, ":") {
+						parts := strings.SplitN(firstIndex, ":", 2)
+						segments[i] = parts[0] + ":" + url.PathEscape(parts[1])
+					} else {
+						segments[i] = url.PathEscape(firstIndex)
+					}
+				}
+			} else {
+				segments[i] = url.PathEscape(segment)
+			}
+		}
+		reqPath = strings.Join(segments, "/")
+	} else if strings.Contains(reqPath, ",") {
+	}
+
 	osUrl.Path = path.Join(osUrl.Path, reqPath)
+
 	osUrlString := osUrl.String()
-	// If the request path is empty and the URL does not end with a slash, add a slash to the URL.
-	// This ensures that for version checks executed to the root URL, the URL ends with a slash.
-	// This is helpful, for example, for load balancers that expect URLs to match the pattern /.*.
 	if reqPath == "" && osUrlString[len(osUrlString)-1:] != "/" {
 		return osUrl.String() + "/", nil
 	}

@@ -10,10 +10,19 @@ const intervalMap: any = {
 
 export class IndexPattern {
   private dateLocale = 'en';
+  private pattern: string;
+  private interval?: string;
 
-  constructor(private pattern: any, private interval?: string) {}
+  constructor(interval: string, pattern: string, timeField?: string) {
+    this.interval = interval;
+    this.pattern = pattern;
+  }
 
   getIndexForToday() {
+    if (typeof this.pattern === 'string' && this.pattern.includes(',')) {
+      return this.pattern;
+    }
+
     if (this.interval) {
       return toUtc().locale(this.dateLocale).format(this.pattern);
     } else {
@@ -26,6 +35,11 @@ export class IndexPattern {
     // for the provided index pattern.
     // This is useful when requesting log context where the only time data we have is the log
     // timestamp.
+
+    if (typeof this.pattern === 'string' && this.pattern.includes(',')) {
+      return this.pattern;
+    }
+
     const indexOffset = 7;
     if (!this.interval) {
       return this.pattern;

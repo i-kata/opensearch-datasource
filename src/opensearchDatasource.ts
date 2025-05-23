@@ -110,7 +110,14 @@ export class OpenSearchDatasource
     this.timeField = settingsData.timeField;
     this.flavor = settingsData.flavor || Flavor.OpenSearch;
     this.version = settingsData.version;
-    this.indexPattern = new IndexPattern(this.index, settingsData.interval);
+
+    const indexPattern = settingsData.database;
+    this.indexPattern = new IndexPattern(
+      settingsData.interval || '',
+      indexPattern?.includes(',') ? indexPattern : (indexPattern || '').replace(/\s+/g, ''),
+      this.timeField
+    );
+
     this.interval = settingsData.timeInterval;
     this.maxConcurrentShardRequests = settingsData.maxConcurrentShardRequests;
     this.queryBuilder = new QueryBuilder({
@@ -707,87 +714,106 @@ export class OpenSearchDatasource
 
   // TODO: instead of being a string, this could be a custom type representing all the available types
   async getFields(type?: string, range?: TimeRange): Promise<MetricFindValue[]> {
-    return this.get('/_mapping', range).then((result: any) => {
-      const typeMap: any = {
-        float: 'number',
-        double: 'number',
-        integer: 'number',
-        long: 'number',
-        date: 'date',
-        date_nanos: 'date',
-        string: 'string',
-        text: 'string',
-        scaled_float: 'number',
-        nested: 'nested',
-      };
+    if (this.index && this.index.includes(',')) {
+      const indices = this.index.split(',').map((i) => i.trim());
+      let allFields: MetricFindValue[] = [];
 
-      const shouldAddField = (obj: any, key: string) => {
-        if (this.isMetadataField(key)) {
-          return false;
-        }
-
-        if (!type) {
-          return true;
-        }
-
-        // equal query type filter, or via typemap translation
-        return type === obj.type || type === typeMap[obj.type];
-      };
-
-      // Store subfield names: [system, process, cpu, total] -> system.process.cpu.total
-      const fieldNameParts: any = [];
-      const fields: any = {};
-
-      function getFieldsRecursively(obj: any) {
-        for (const key in obj) {
-          const subObj = obj[key];
-
-          // Check mapping field for nested fields
-          if (_.isObject(subObj.properties)) {
-            fieldNameParts.push(key);
-            getFieldsRecursively(subObj.properties);
-          }
-
-          if (_.isObject(subObj.fields)) {
-            fieldNameParts.push(key);
-            getFieldsRecursively(subObj.fields);
-          }
-
-          if (_.isString(subObj.type)) {
-            const fieldName = fieldNameParts.concat(key).join('.');
-
-            // Hide meta-fields and check field type
-            if (shouldAddField(subObj, key)) {
-              fields[fieldName] = {
-                text: fieldName,
-                type: subObj.type,
-              };
-            }
-          }
-        }
-        fieldNameParts.pop();
-      }
-
-      for (const indexName in result) {
-        const index = result[indexName];
-        if (index && index.mappings) {
-          const mappings = index.mappings;
-
-          if (this.flavor === Flavor.Elasticsearch && lt(this.version, '7.0.0')) {
-            for (const typeName in mappings) {
-              getFieldsRecursively(mappings[typeName].properties);
-            }
+      for (const index of indices) {
+        try {
+          let mappingPath;
+          if (index.includes(':')) {
+            // Cross-cluster index: cluster:index
+            mappingPath = `${index}/_mapping`;
           } else {
-            getFieldsRecursively(mappings.properties);
+            // Local index
+            mappingPath = `${index}/_mapping`;
           }
+
+          const result = await this.get(mappingPath, range);
+          const fields = await this.processMapping(result, type);
+          allFields = [...allFields, ...fields];
+        } catch (error) {
+          console.log(`Failed to fetch fields for index ${index}:`, error);
         }
       }
 
-      // transform to array
-      return _.map(fields, (value) => {
-        return value;
-      });
+      return _.uniqBy(allFields, 'text');
+    }
+
+    return this.get('/_mapping', range).then((result) => {
+      return this.processMapping(result, type);
     });
+  }
+
+  private processMapping(result: any, type?: string): MetricFindValue[] {
+    const typeMap: any = {
+      float: 'number',
+      double: 'number',
+      integer: 'number',
+      long: 'number',
+      date: 'date',
+      date_nanos: 'date',
+      string: 'string',
+      text: 'string',
+      scaled_float: 'number',
+      nested: 'nested',
+    };
+
+    const fields: any = {};
+    const fieldNameParts: any = [];
+
+    const shouldAddField = (obj: any, key: string) => {
+      if (this.isMetadataField(key)) {
+        return false;
+      }
+      if (!type) {
+        return true;
+      }
+      return type === obj.type || type === typeMap[obj.type];
+    };
+
+    const processFields = (obj: any) => {
+      for (const key in obj) {
+        const subObj = obj[key];
+
+        if (_.isObject(subObj.properties)) {
+          fieldNameParts.push(key);
+          processFields(subObj.properties);
+        }
+
+        if (_.isObject(subObj.fields)) {
+          fieldNameParts.push(key);
+          processFields(subObj.fields);
+        }
+
+        if (_.isString(subObj.type)) {
+          const fieldName = fieldNameParts.concat(key).join('.');
+          if (shouldAddField(subObj, key)) {
+            fields[fieldName] = {
+              text: fieldName,
+              type: subObj.type,
+            };
+          }
+        }
+      }
+      fieldNameParts.pop();
+    };
+
+    for (const indexName in result) {
+      const index = result[indexName];
+      if (index && index.mappings) {
+        const mappings = index.mappings;
+        if (this.flavor === Flavor.Elasticsearch && lt(this.version, '7.0.0')) {
+          for (const typeName in mappings) {
+            processFields(mappings[typeName].properties);
+          }
+        } else {
+          processFields(mappings.properties);
+        }
+      }
+    }
+
+    return _.map(fields, (value) => value);
   }
 
   getTerms(queryDef: any, range = getDefaultTimeRange(), isTagValueQuery = false) {
