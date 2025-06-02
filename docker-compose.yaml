@@ -20,44 +20,56 @@ services:
       - ./provisioning:/etc/grafana/provisioning
     networks:
       - opensearch-net
+
+  # Cluster 1
   opensearch-node1:
-    image: opensearchproject/opensearch:latest
+    image: opensearchproject/opensearch:2.11.0
     container_name: opensearch-node1
     environment:
-      - cluster.name=opensearch-cluster
+      - cluster.name=opensearch-cluster1
       - node.name=opensearch-node1
-      - discovery.seed_hosts=opensearch-node1,opensearch-node2
-      - cluster.initial_master_nodes=opensearch-node1,opensearch-node2
-      - bootstrap.memory_lock=true # along with the memlock settings below, disables swapping
-      - 'OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m' # minimum and maximum Java heap size, recommend setting both to 50% of system RAM
-      - 'OPENSEARCH_INITIAL_ADMIN_PASSWORD=my_%New%_passW0rd!@#'
+      - discovery.seed_hosts=opensearch-node1
+      - cluster.initial_master_nodes=opensearch-node1
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "reindex.remote.whitelist=opensearch-node3:9200,opensearch-node4:9200,opensearch-node5:9200,opensearch-node6:9200"
+      - "cluster.remote.cluster2.seeds=opensearch-node3:9300,opensearch-node4:9300"
+      - "cluster.remote.cluster3.seeds=opensearch-node5:9300,opensearch-node6:9300"
+      - "path.repo=/usr/share/opensearch/snapshots"
     ulimits:
       memlock:
         soft: -1
         hard: -1
       nofile:
-        soft: 65536 # maximum number of open files for the OpenSearch user, set to at least 65536 on modern systems
+        soft: 65536
         hard: 65536
     volumes:
       - opensearch-data1:/usr/share/opensearch/data
+      - ./snapshots:/usr/share/opensearch/snapshots
     ports:
       - 9200:9200
-      - 9600:9600 # required for Performance Analyzer
-    expose:
-      - '9200'
+      - 9300:9300
     networks:
       - opensearch-net
+
   opensearch-node2:
-    image: opensearchproject/opensearch:latest
+    image: opensearchproject/opensearch:2.11.0
     container_name: opensearch-node2
     environment:
-      - cluster.name=opensearch-cluster
+      - cluster.name=opensearch-cluster1
       - node.name=opensearch-node2
       - discovery.seed_hosts=opensearch-node1,opensearch-node2
-      - cluster.initial_master_nodes=opensearch-node1,opensearch-node2
+      - cluster.initial_master_nodes=opensearch-node1
       - bootstrap.memory_lock=true
-      - 'OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m'
-      - 'OPENSEARCH_INITIAL_ADMIN_PASSWORD=my_%New%_passW0rd!@#'
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "reindex.remote.whitelist=opensearch-node3:9200,opensearch-node4:9200,opensearch-node5:9200,opensearch-node6:9200"
+      - "cluster.remote.cluster2.seeds=opensearch-node3:9300,opensearch-node4:9300"
+      - "cluster.remote.cluster3.seeds=opensearch-node5:9300,opensearch-node6:9300"
+      - "path.repo=/usr/share/opensearch/snapshots"
     ulimits:
       memlock:
         soft: -1
@@ -67,23 +79,148 @@ services:
         hard: 65536
     volumes:
       - opensearch-data2:/usr/share/opensearch/data
+      - ./snapshots:/usr/share/opensearch/snapshots
     networks:
       - opensearch-net
-  opensearch-dashboards:
-    image: opensearchproject/opensearch-dashboards:latest
-    container_name: opensearch-dashboards
-    ports:
-      - 5601:5601
-    expose:
-      - '5601'
+    depends_on:
+      - opensearch-node1
+
+  # Cluster 2
+  opensearch-node3:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: opensearch-node3
     environment:
-      OPENSEARCH_HOSTS: '["https://opensearch-node1:9200","https://opensearch-node2:9200"]'
+      - cluster.name=opensearch-cluster2
+      - node.name=opensearch-node3
+      - discovery.seed_hosts=opensearch-node3
+      - cluster.initial_master_nodes=opensearch-node3
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "reindex.remote.whitelist=opensearch-node1:9200,opensearch-node2:9200,opensearch-node5:9200,opensearch-node6:9200"
+      - "cluster.remote.cluster1.seeds=opensearch-node1:9300,opensearch-node2:9300"
+      - "cluster.remote.cluster3.seeds=opensearch-node5:9300,opensearch-node6:9300"
+      - "path.repo=/usr/share/opensearch/snapshots"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data3:/usr/share/opensearch/data
+      - ./snapshots:/usr/share/opensearch/snapshots
+    ports:
+      - 9201:9200
+      - 9301:9300
     networks:
       - opensearch-net
+
+  opensearch-node4:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: opensearch-node4
+    environment:
+      - cluster.name=opensearch-cluster2
+      - node.name=opensearch-node4
+      - discovery.seed_hosts=opensearch-node3,opensearch-node4
+      - cluster.initial_master_nodes=opensearch-node3
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "reindex.remote.whitelist=opensearch-node1:9200,opensearch-node2:9200,opensearch-node5:9200,opensearch-node6:9200"
+      - "cluster.remote.cluster1.seeds=opensearch-node1:9300,opensearch-node2:9300"
+      - "cluster.remote.cluster3.seeds=opensearch-node5:9300,opensearch-node6:9300"
+      - "path.repo=/usr/share/opensearch/snapshots"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data4:/usr/share/opensearch/data
+      - ./snapshots:/usr/share/opensearch/snapshots
+    networks:
+      - opensearch-net
+    depends_on:
+      - opensearch-node3
+
+  # Cluster 3 (New)
+  opensearch-node5:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: opensearch-node5
+    environment:
+      - cluster.name=opensearch-cluster3
+      - node.name=opensearch-node5
+      - discovery.seed_hosts=opensearch-node5
+      - cluster.initial_master_nodes=opensearch-node5
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "reindex.remote.whitelist=opensearch-node1:9200,opensearch-node2:9200,opensearch-node3:9200,opensearch-node4:9200"
+      - "cluster.remote.cluster1.seeds=opensearch-node1:9300,opensearch-node2:9300"
+      - "cluster.remote.cluster2.seeds=opensearch-node3:9300,opensearch-node4:9300"
+      - "path.repo=/usr/share/opensearch/snapshots"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data5:/usr/share/opensearch/data
+      - ./snapshots:/usr/share/opensearch/snapshots
+    ports:
+      - 9202:9200
+      - 9302:9300
+    networks:
+      - opensearch-net
+
+  opensearch-node6:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: opensearch-node6
+    environment:
+      - cluster.name=opensearch-cluster3
+      - node.name=opensearch-node6
+      - discovery.seed_hosts=opensearch-node5,opensearch-node6
+      - cluster.initial_master_nodes=opensearch-node5
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "reindex.remote.whitelist=opensearch-node1:9200,opensearch-node2:9200,opensearch-node3:9200,opensearch-node4:9200"
+      - "cluster.remote.cluster1.seeds=opensearch-node1:9300,opensearch-node2:9300"
+      - "cluster.remote.cluster2.seeds=opensearch-node3:9300,opensearch-node4:9300"
+      - "path.repo=/usr/share/opensearch/snapshots"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data6:/usr/share/opensearch/data
+      - ./snapshots:/usr/share/opensearch/snapshots
+    networks:
+      - opensearch-net
+    depends_on:
+      - opensearch-node5
 
 volumes:
   opensearch-data1:
   opensearch-data2:
+  opensearch-data3:
+  opensearch-data4:
+  opensearch-data5:
+  opensearch-data6:
 
 networks:
   opensearch-net:
+    driver: bridge
